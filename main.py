@@ -29,6 +29,7 @@ import run_lib
 FLAGS = flags.FLAGS
 
 config_flags.DEFINE_config_file("config", None, "Training configuration.", lock_config=True)
+
 flags.DEFINE_string("workdir", None, "Work directory.")
 flags.DEFINE_enum("mode", None, ["train", "eval"], "Running mode: train or eval")
 flags.DEFINE_string("eval_folder", "eval",
