@@ -15,10 +15,12 @@
 
 # pylint: skip-file
 # pytype: skip-file
-"""Various sampling methods."""
+
+"""Compute an unbiased estimate to the log-likelihood in bits/dim."""
 
 import torch
 import numpy as np
+
 from scipy import integrate
 from models import utils as mutils
 
@@ -31,7 +33,9 @@ def get_div_fn(fn):
       x.requires_grad_(True)
       fn_eps = torch.sum(fn(x, t) * eps)
       grad_fn_eps = torch.autograd.grad(fn_eps, x)[0]
+      
     x.requires_grad_(False)
+    
     return torch.sum(grad_fn_eps * eps, dim=tuple(range(1, len(x.shape))))
 
   return div_fn
@@ -58,9 +62,11 @@ def get_likelihood_fn(sde, inverse_scaler, hutchinson_type='Rademacher',
 
   def drift_fn(model, x, t):
     """The drift function of the reverse-time SDE."""
+    
     score_fn = mutils.get_score_fn(sde, model, train=False, continuous=True)
     # Probability flow ODE is a special case of Reverse SDE
     rsde = sde.reverse(score_fn, probability_flow=True)
+    
     return rsde.sde(x, t)[0]
 
   def div_fn(model, x, t, noise):
@@ -79,6 +85,7 @@ def get_likelihood_fn(sde, inverse_scaler, hutchinson_type='Rademacher',
         probability flow ODE.
       nfe: An integer. The number of function evaluations used for running the black-box ODE solver.
     """
+    
     with torch.no_grad():
       shape = data.shape
       if hutchinson_type == 'Gaussian':
@@ -93,6 +100,7 @@ def get_likelihood_fn(sde, inverse_scaler, hutchinson_type='Rademacher',
         vec_t = torch.ones(sample.shape[0], device=sample.device) * t
         drift = mutils.to_flattened_numpy(drift_fn(model, sample, vec_t))
         logp_grad = mutils.to_flattened_numpy(div_fn(model, sample, vec_t, epsilon))
+        
         return np.concatenate([drift, logp_grad], axis=0)
 
       init = np.concatenate([mutils.to_flattened_numpy(data), np.zeros((shape[0],))], axis=0)
@@ -108,6 +116,7 @@ def get_likelihood_fn(sde, inverse_scaler, hutchinson_type='Rademacher',
       # A hack to convert log-likelihoods to bits/dim
       offset = 7. - inverse_scaler(-1.)
       bpd = bpd + offset
+      
       return bpd, z, nfe
 
   return likelihood_fn

@@ -15,17 +15,22 @@
 
 # pylint: skip-file
 # pytype: skip-file
+
 """Various sampling methods."""
+
+import abc
 import functools
 
 import torch
 import numpy as np
-import abc
 
-from models.utils import from_flattened_numpy, to_flattened_numpy, get_score_fn
 from scipy import integrate
+
 import sde_lib
+
 from models import utils as mutils
+from models.utils import from_flattened_numpy, to_flattened_numpy, get_score_fn
+
 
 _CORRECTORS = {}
 _PREDICTORS = {}
@@ -39,9 +44,11 @@ def register_predictor(cls=None, *, name=None):
       local_name = cls.__name__
     else:
       local_name = name
+      
     if local_name in _PREDICTORS:
       raise ValueError(f'Already registered model with name: {local_name}')
     _PREDICTORS[local_name] = cls
+    
     return cls
 
   if cls is None:
@@ -58,9 +65,11 @@ def register_corrector(cls=None, *, name=None):
       local_name = cls.__name__
     else:
       local_name = name
+      
     if local_name in _CORRECTORS:
       raise ValueError(f'Already registered model with name: {local_name}')
     _CORRECTORS[local_name] = cls
+    
     return cls
 
   if cls is None:
@@ -128,6 +137,7 @@ class Predictor(abc.ABC):
 
   def __init__(self, sde, score_fn, probability_flow=False):
     super().__init__()
+    
     self.sde = sde
     # Compute the reverse SDE/ODE
     self.rsde = sde.reverse(score_fn, probability_flow)
@@ -153,6 +163,7 @@ class Corrector(abc.ABC):
 
   def __init__(self, sde, score_fn, snr, n_steps):
     super().__init__()
+    
     self.sde = sde
     self.score_fn = score_fn
     self.snr = snr
@@ -184,6 +195,7 @@ class EulerMaruyamaPredictor(Predictor):
     drift, diffusion = self.rsde.sde(x, t)
     x_mean = x + drift * dt
     x = x_mean + diffusion[:, None, None, None] * np.sqrt(-dt) * z
+    
     return x, x_mean
 
 
@@ -197,6 +209,7 @@ class ReverseDiffusionPredictor(Predictor):
     z = torch.randn_like(x)
     x_mean = x - f
     x = x_mean + G[:, None, None, None] * z
+    
     return x, x_mean
 
 
@@ -206,8 +219,10 @@ class AncestralSamplingPredictor(Predictor):
 
   def __init__(self, sde, score_fn, probability_flow=False):
     super().__init__(sde, score_fn, probability_flow)
+    
     if not isinstance(sde, sde_lib.VPSDE) and not isinstance(sde, sde_lib.VESDE):
       raise NotImplementedError(f"SDE class {sde.__class__.__name__} not yet supported.")
+    
     assert not probability_flow, "Probability flow not supported by ancestral sampling"
 
   def vesde_update_fn(self, x, t):
@@ -220,6 +235,7 @@ class AncestralSamplingPredictor(Predictor):
     std = torch.sqrt((adjacent_sigma ** 2 * (sigma ** 2 - adjacent_sigma ** 2)) / (sigma ** 2))
     noise = torch.randn_like(x)
     x = x_mean + std[:, None, None, None] * noise
+    
     return x, x_mean
 
   def vpsde_update_fn(self, x, t):
@@ -230,6 +246,7 @@ class AncestralSamplingPredictor(Predictor):
     x_mean = (x + beta[:, None, None, None] * score) / torch.sqrt(1. - beta)[:, None, None, None]
     noise = torch.randn_like(x)
     x = x_mean + torch.sqrt(beta)[:, None, None, None] * noise
+    
     return x, x_mean
 
   def update_fn(self, x, t):
@@ -254,6 +271,7 @@ class NonePredictor(Predictor):
 class LangevinCorrector(Corrector):
   def __init__(self, sde, score_fn, snr, n_steps):
     super().__init__(sde, score_fn, snr, n_steps)
+    
     if not isinstance(sde, sde_lib.VPSDE) \
         and not isinstance(sde, sde_lib.VESDE) \
         and not isinstance(sde, sde_lib.subVPSDE):
@@ -264,13 +282,14 @@ class LangevinCorrector(Corrector):
     score_fn = self.score_fn
     n_steps = self.n_steps
     target_snr = self.snr
+    
     if isinstance(sde, sde_lib.VPSDE) or isinstance(sde, sde_lib.subVPSDE):
       timestep = (t * (sde.N - 1) / sde.T).long()
       alpha = sde.alphas.to(t.device)[timestep]
     else:
       alpha = torch.ones_like(t)
 
-    for i in range(n_steps):
+    for _ in range(n_steps):
       grad = score_fn(x, t)
       noise = torch.randn_like(x)
       grad_norm = torch.norm(grad.reshape(grad.shape[0], -1), dim=-1).mean()
@@ -291,9 +310,11 @@ class AnnealedLangevinDynamics(Corrector):
 
   def __init__(self, sde, score_fn, snr, n_steps):
     super().__init__(sde, score_fn, snr, n_steps)
+    
     if not isinstance(sde, sde_lib.VPSDE) \
         and not isinstance(sde, sde_lib.VESDE) \
         and not isinstance(sde, sde_lib.subVPSDE):
+          
       raise NotImplementedError(f"SDE class {sde.__class__.__name__} not yet supported.")
 
   def update_fn(self, x, t):
@@ -301,6 +322,7 @@ class AnnealedLangevinDynamics(Corrector):
     score_fn = self.score_fn
     n_steps = self.n_steps
     target_snr = self.snr
+    
     if isinstance(sde, sde_lib.VPSDE) or isinstance(sde, sde_lib.subVPSDE):
       timestep = (t * (sde.N - 1) / sde.T).long()
       alpha = sde.alphas.to(t.device)[timestep]
@@ -309,7 +331,7 @@ class AnnealedLangevinDynamics(Corrector):
 
     std = self.sde.marginal_prob(x, t)[1]
 
-    for i in range(n_steps):
+    for _ in range(n_steps):
       grad = score_fn(x, t)
       noise = torch.randn_like(x)
       step_size = (target_snr * std) ** 2 * 2 * alpha
@@ -332,23 +354,29 @@ class NoneCorrector(Corrector):
 
 def shared_predictor_update_fn(x, t, sde, model, predictor, probability_flow, continuous):
   """A wrapper that configures and returns the update function of predictors."""
+  
   score_fn = mutils.get_score_fn(sde, model, train=False, continuous=continuous)
+  
   if predictor is None:
     # Corrector-only sampler
     predictor_obj = NonePredictor(sde, score_fn, probability_flow)
   else:
     predictor_obj = predictor(sde, score_fn, probability_flow)
+    
   return predictor_obj.update_fn(x, t)
 
 
 def shared_corrector_update_fn(x, t, sde, model, corrector, continuous, snr, n_steps):
   """A wrapper tha configures and returns the update function of correctors."""
+  
   score_fn = mutils.get_score_fn(sde, model, train=False, continuous=continuous)
+  
   if corrector is None:
     # Predictor-only sampler
     corrector_obj = NoneCorrector(sde, score_fn, snr, n_steps)
   else:
     corrector_obj = corrector(sde, score_fn, snr, n_steps)
+    
   return corrector_obj.update_fn(x, t)
 
 
@@ -374,6 +402,7 @@ def get_pc_sampler(sde, shape, predictor, corrector, inverse_scaler, snr,
   Returns:
     A sampling function that returns samples and the number of function evaluations during sampling.
   """
+  
   # Create predictor & corrector update functions
   predictor_update_fn = functools.partial(shared_predictor_update_fn,
                                           sde=sde,
@@ -395,6 +424,7 @@ def get_pc_sampler(sde, shape, predictor, corrector, inverse_scaler, snr,
     Returns:
       Samples, number of function evaluations.
     """
+    
     with torch.no_grad():
       # Initial sample
       x = sde.prior_sampling(shape).to(device)
@@ -438,12 +468,15 @@ def get_ode_sampler(sde, shape, inverse_scaler,
     predictor_obj = ReverseDiffusionPredictor(sde, score_fn, probability_flow=False)
     vec_eps = torch.ones(x.shape[0], device=x.device) * eps
     _, x = predictor_obj.update_fn(x, vec_eps)
+    
     return x
 
   def drift_fn(model, x, t):
     """Get the drift function of the reverse-time SDE."""
+    
     score_fn = get_score_fn(sde, model, train=False, continuous=True)
     rsde = sde.reverse(score_fn, probability_flow=True)
+    
     return rsde.sde(x, t)[0]
 
   def ode_sampler(model, z=None):
@@ -455,6 +488,7 @@ def get_ode_sampler(sde, shape, inverse_scaler,
     Returns:
       samples, number of function evaluations.
     """
+    
     with torch.no_grad():
       # Initial sample
       if z is None:
@@ -467,6 +501,7 @@ def get_ode_sampler(sde, shape, inverse_scaler,
         x = from_flattened_numpy(x, shape).to(device).type(torch.float32)
         vec_t = torch.ones(shape[0], device=x.device) * t
         drift = drift_fn(model, x, vec_t)
+        
         return to_flattened_numpy(drift)
 
       # Black-box ODE solver for the probability flow ODE
@@ -480,6 +515,7 @@ def get_ode_sampler(sde, shape, inverse_scaler,
         x = denoise_update_fn(model, x)
 
       x = inverse_scaler(x)
+      
       return x, nfe
 
   return ode_sampler

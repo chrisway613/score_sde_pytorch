@@ -282,6 +282,7 @@ class VESDE(SDE):
     
     self.sigma_min = sigma_min
     self.sigma_max = sigma_max
+    # 幂成等差数列, 最终便是等比数列
     self.discrete_sigmas = torch.exp(torch.linspace(np.log(self.sigma_min), np.log(self.sigma_max), N))
 
   @property

@@ -18,19 +18,21 @@
 
 import torch
 import torch.optim as optim
+
 import numpy as np
+
 from models import utils as mutils
 from sde_lib import VESDE, VPSDE
 
 
 def get_optimizer(config, params):
   """Returns a flax optimizer object based on `config`."""
+  
   if config.optim.optimizer == 'Adam':
     optimizer = optim.Adam(params, lr=config.optim.lr, betas=(config.optim.beta1, 0.999), eps=config.optim.eps,
                            weight_decay=config.optim.weight_decay)
   else:
-    raise NotImplementedError(
-      f'Optimizer {config.optim.optimizer} not supported yet!')
+    raise NotImplementedError(f'Optimizer {config.optim.optimizer} not supported yet!')
 
   return optimizer
 
@@ -42,11 +44,14 @@ def optimization_manager(config):
                   warmup=config.optim.warmup,
                   grad_clip=config.optim.grad_clip):
     """Optimizes with warmup and gradient clipping (disabled if negative)."""
+    
     if warmup > 0:
       for g in optimizer.param_groups:
         g['lr'] = lr * np.minimum(step / warmup, 1.0)
+        
     if grad_clip >= 0:
       torch.nn.utils.clip_grad_norm_(params, max_norm=grad_clip)
+    
     optimizer.step()
 
   return optimize_fn
@@ -68,6 +73,7 @@ def get_sde_loss_fn(sde, train, reduce_mean=True, continuous=True, likelihood_we
   Returns:
     A loss function.
   """
+  
   reduce_op = torch.mean if reduce_mean else lambda *args, **kwargs: 0.5 * torch.sum(*args, **kwargs)
 
   def loss_fn(model, batch):
@@ -80,9 +86,11 @@ def get_sde_loss_fn(sde, train, reduce_mean=True, continuous=True, likelihood_we
     Returns:
       loss: A scalar that represents the average loss value across the mini-batch.
     """
+    
     score_fn = mutils.get_score_fn(sde, model, train=train, continuous=continuous)
     t = torch.rand(batch.shape[0], device=batch.device) * (sde.T - eps) + eps
     z = torch.randn_like(batch)
+    
     mean, std = sde.marginal_prob(batch, t)
     perturbed_data = mean + std[:, None, None, None] * z
     score = score_fn(perturbed_data, t)
@@ -96,6 +104,7 @@ def get_sde_loss_fn(sde, train, reduce_mean=True, continuous=True, likelihood_we
       losses = reduce_op(losses.reshape(losses.shape[0], -1), dim=-1) * g2
 
     loss = torch.mean(losses)
+    
     return loss
 
   return loss_fn
@@ -103,6 +112,7 @@ def get_sde_loss_fn(sde, train, reduce_mean=True, continuous=True, likelihood_we
 
 def get_smld_loss_fn(vesde, train, reduce_mean=False):
   """Legacy code to reproduce previous results on SMLD(NCSN). Not recommended for new work."""
+  
   assert isinstance(vesde, VESDE), "SMLD training only works for VESDEs."
 
   # Previous SMLD models assume descending sigmas
@@ -110,16 +120,22 @@ def get_smld_loss_fn(vesde, train, reduce_mean=False):
   reduce_op = torch.mean if reduce_mean else lambda *args, **kwargs: 0.5 * torch.sum(*args, **kwargs)
 
   def loss_fn(model, batch):
+    """对应 NCSN 论文中的式(5), (6)"""
+    
     model_fn = mutils.get_model_fn(model, train=train)
+    
     labels = torch.randint(0, vesde.N, (batch.shape[0],), device=batch.device)
     sigmas = smld_sigma_array.to(batch.device)[labels]
+    
     noise = torch.randn_like(batch) * sigmas[:, None, None, None]
     perturbed_data = noise + batch
     score = model_fn(perturbed_data, labels)
+    
     target = -noise / (sigmas ** 2)[:, None, None, None]
     losses = torch.square(score - target)
     losses = reduce_op(losses.reshape(losses.shape[0], -1), dim=-1) * sigmas ** 2
     loss = torch.mean(losses)
+    
     return loss
 
   return loss_fn
@@ -127,22 +143,27 @@ def get_smld_loss_fn(vesde, train, reduce_mean=False):
 
 def get_ddpm_loss_fn(vpsde, train, reduce_mean=True):
   """Legacy code to reproduce previous results on DDPM. Not recommended for new work."""
+  
   assert isinstance(vpsde, VPSDE), "DDPM training only works for VPSDEs."
 
   reduce_op = torch.mean if reduce_mean else lambda *args, **kwargs: 0.5 * torch.sum(*args, **kwargs)
 
   def loss_fn(model, batch):
     model_fn = mutils.get_model_fn(model, train=train)
+    
     labels = torch.randint(0, vpsde.N, (batch.shape[0],), device=batch.device)
     sqrt_alphas_cumprod = vpsde.sqrt_alphas_cumprod.to(batch.device)
     sqrt_1m_alphas_cumprod = vpsde.sqrt_1m_alphas_cumprod.to(batch.device)
+    
     noise = torch.randn_like(batch)
     perturbed_data = sqrt_alphas_cumprod[labels, None, None, None] * batch + \
                      sqrt_1m_alphas_cumprod[labels, None, None, None] * noise
+                     
     score = model_fn(perturbed_data, labels)
     losses = torch.square(score - noise)
     losses = reduce_op(losses.reshape(losses.shape[0], -1), dim=-1)
     loss = torch.mean(losses)
+    
     return loss
 
   return loss_fn
@@ -162,11 +183,13 @@ def get_step_fn(sde, train, optimize_fn=None, reduce_mean=False, continuous=True
   Returns:
     A one-step function for training or evaluation.
   """
+  
   if continuous:
     loss_fn = get_sde_loss_fn(sde, train, reduce_mean=reduce_mean,
                               continuous=True, likelihood_weighting=likelihood_weighting)
   else:
     assert not likelihood_weighting, "Likelihood weighting is not supported for original SMLD/DDPM training."
+    
     if isinstance(sde, VESDE):
       loss_fn = get_smld_loss_fn(sde, train, reduce_mean=reduce_mean)
     elif isinstance(sde, VPSDE):
@@ -188,20 +211,28 @@ def get_step_fn(sde, train, optimize_fn=None, reduce_mean=False, continuous=True
     Returns:
       loss: The average loss value of this state.
     """
+    
     model = state['model']
+    
     if train:
       optimizer = state['optimizer']
       optimizer.zero_grad()
+      
       loss = loss_fn(model, batch)
       loss.backward()
+      
+      # 可能有 warmup 和 梯度裁剪
       optimize_fn(optimizer, model.parameters(), step=state['step'])
+      
       state['step'] += 1
       state['ema'].update(model.parameters())
     else:
       with torch.no_grad():
+        # TODO
         ema = state['ema']
         ema.store(model.parameters())
         ema.copy_to(model.parameters())
+        
         loss = loss_fn(model, batch)
         ema.restore(model.parameters())
 

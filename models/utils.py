@@ -87,10 +87,12 @@ def get_ddpm_params(config):
 
 def create_model(config):
   """Create the score model."""
+  
   model_name = config.model.name
   score_model = get_model(model_name)(config)
   score_model = score_model.to(config.device)
   score_model = torch.nn.DataParallel(score_model)
+  
   return score_model
 
 
@@ -116,6 +118,7 @@ def get_model_fn(model, train=False):
     Returns:
       A tuple of (model output, new mutable states)
     """
+    
     if not train:
       model.eval()
       return model(x, labels)
@@ -138,6 +141,7 @@ def get_score_fn(sde, model, train=False, continuous=False):
   Returns:
     A score function.
   """
+  
   model_fn = get_model_fn(model, train=train)
 
   if isinstance(sde, sde_lib.VPSDE) or isinstance(sde, sde_lib.subVPSDE):
@@ -149,6 +153,7 @@ def get_score_fn(sde, model, train=False, continuous=False):
         # continuously-trained models.
         labels = t * 999
         score = model_fn(x, labels)
+        # 这里之所以第一个输入参数为0是为了计算效率，因为不需要用到这个参数(该参数用于计算均值)
         std = sde.marginal_prob(torch.zeros_like(x), t)[1]
       else:
         # For VP-trained models, t=0 corresponds to the lowest noise level
@@ -156,12 +161,13 @@ def get_score_fn(sde, model, train=False, continuous=False):
         score = model_fn(x, labels)
         std = sde.sqrt_1m_alphas_cumprod.to(labels.device)[labels.long()]
 
+      # 由于 DDPM 模型输出是噪声, 因此要在这里转换成真正的 score
       score = -score / std[:, None, None, None]
       return score
-
   elif isinstance(sde, sde_lib.VESDE):
     def score_fn(x, t):
       if continuous:
+        # 这里之所以第一个输入参数为0是为了计算效率，因为不需要用到这个参数(该参数用于计算均值)
         labels = sde.marginal_prob(torch.zeros_like(x), t)[1]
       else:
         # For VE-trained models, t=0 corresponds to the highest noise level
@@ -171,7 +177,6 @@ def get_score_fn(sde, model, train=False, continuous=False):
 
       score = model_fn(x, labels)
       return score
-
   else:
     raise NotImplementedError(f"SDE class {sde.__class__.__name__} not yet supported.")
 
