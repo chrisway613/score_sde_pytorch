@@ -47,14 +47,14 @@ def get_pc_inpainter(sde, predictor, corrector, inverse_scaler, snr,
             with torch.no_grad():
                 vec_t = torch.ones(data.shape[0], device=data.device) * t
                 x, x_mean = update_fn(x, vec_t, model=model)
-                
+
                 masked_data_mean, std = sde.marginal_prob(data, vec_t)
                 masked_data = masked_data_mean + \
                     torch.randn_like(x) * std[:, None, None, None]
-                
+
                 x = x * (1. - mask) + masked_data * mask
                 x_mean = x * (1. - mask) + masked_data_mean * mask
-                
+
                 return x, x_mean
 
         return inpaint_update_fn
@@ -74,16 +74,19 @@ def get_pc_inpainter(sde, predictor, corrector, inverse_scaler, snr,
         Returns:
           Inpainted (complete) images.
         """
-        
+
         with torch.no_grad():
             # Initial sample
-            x = data * mask + sde.prior_sampling(data.shape).to(data.device) * (1. - mask)
+            x = data * mask + \
+                sde.prior_sampling(data.shape).to(data.device) * (1. - mask)
             timesteps = torch.linspace(sde.T, eps, sde.N)
-            
+
             for i in range(sde.N):
                 t = timesteps[i]
-                x, x_mean = corrector_inpaint_update_fn(model, data, mask, x, t)
-                x, x_mean = projector_inpaint_update_fn(model, data, mask, x, t)
+                x, x_mean = corrector_inpaint_update_fn(
+                    model, data, mask, x, t)
+                x, x_mean = projector_inpaint_update_fn(
+                    model, data, mask, x, t)
 
             return inverse_scaler(x_mean if denoise else x)
 
@@ -144,14 +147,17 @@ def get_pc_colorizer(sde, predictor, corrector, inverse_scaler,
         def colorization_update_fn(model, gray_scale_img, x, t):
             mask = get_mask(x)
             vec_t = torch.ones(x.shape[0], device=x.device) * t
+
             x, x_mean = update_fn(x, vec_t, model=model)
             masked_data_mean, std = sde.marginal_prob(
                 decouple(gray_scale_img), vec_t)
             masked_data = masked_data_mean + \
                 torch.randn_like(x) * std[:, None, None, None]
+
             x = couple(decouple(x) * (1. - mask) + masked_data * mask)
             x_mean = couple(decouple(x) * (1. - mask) +
                             masked_data_mean * mask)
+
             return x, x_mean
 
         return colorization_update_fn
@@ -176,14 +182,20 @@ def get_pc_colorizer(sde, predictor, corrector, inverse_scaler,
         Returns:
           Colorized images.
         """
+
         with torch.no_grad():
             shape = gray_scale_img.shape
             mask = get_mask(gray_scale_img)
+
             # Initial sample
-            x = couple(decouple(gray_scale_img) * mask +
-                       decouple(sde.prior_sampling(shape).to(gray_scale_img.device)
-                                * (1. - mask)))
+            x = couple(
+                decouple(gray_scale_img) * mask +
+                decouple(sde.prior_sampling(shape).to(
+                    gray_scale_img.device) * (1. - mask))
+
+            )
             timesteps = torch.linspace(sde.T, eps, sde.N)
+
             for i in range(sde.N):
                 t = timesteps[i]
                 x, x_mean = corrector_colorize_update_fn(
