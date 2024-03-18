@@ -21,8 +21,10 @@ class ExponentialMovingAverage:
           use_num_updates: Whether to use number of updates when computing
             averages.
         """
+        
         if decay < 0.0 or decay > 1.0:
             raise ValueError('Decay must be between 0 and 1')
+        
         self.decay = decay
         self.num_updates = 0 if use_num_updates else None
         self.shadow_params = [p.clone().detach()
@@ -40,12 +42,16 @@ class ExponentialMovingAverage:
           parameters: Iterable of `torch.nn.Parameter`; usually the same set of
             parameters used to initialize this object.
         """
+        
         decay = self.decay
+        
         if self.num_updates is not None:
             self.num_updates += 1
             decay = min(decay, (1 + self.num_updates) /
                         (10 + self.num_updates))
+            
         one_minus_decay = 1.0 - decay
+        
         with torch.no_grad():
             parameters = [p for p in parameters if p.requires_grad]
             for s_param, param in zip(self.shadow_params, parameters):
@@ -59,6 +65,7 @@ class ExponentialMovingAverage:
           parameters: Iterable of `torch.nn.Parameter`; the parameters to be
             updated with the stored moving averages.
         """
+        
         parameters = [p for p in parameters if p.requires_grad]
         for s_param, param in zip(self.shadow_params, parameters):
             if param.requires_grad:
@@ -72,20 +79,22 @@ class ExponentialMovingAverage:
           parameters: Iterable of `torch.nn.Parameter`; the parameters to be
             temporarily stored.
         """
+        
         self.collected_params = [param.clone() for param in parameters]
 
     def restore(self, parameters):
         """
         Restore the parameters stored with the `store` method.
         Useful to validate the model with EMA parameters without affecting the
-        original optimization process. Store the parameters before the
-        `copy_to` method. After validation (or model saving), use this to
+        original optimization process. 
+        Store the parameters before the `copy_to` method. After validation (or model saving), use this to
         restore the former parameters.
 
         Args:
           parameters: Iterable of `torch.nn.Parameter`; the parameters to be
             updated with the stored parameters.
         """
+        
         for c_param, param in zip(self.collected_params, parameters):
             param.data.copy_(c_param.data)
 

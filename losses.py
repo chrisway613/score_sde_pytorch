@@ -239,7 +239,6 @@ def get_step_fn(sde, train, optimize_fn=None, reduce_mean=False, continuous=True
             state['ema'].update(model.parameters())
         else:
             with torch.no_grad():
-                # TODO
                 ema = state['ema']
                 ema.store(model.parameters())
                 ema.copy_to(model.parameters())
