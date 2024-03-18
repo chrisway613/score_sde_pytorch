@@ -196,6 +196,7 @@ def evaluate(config,
       eval_folder: The subfolder for storing evaluation results. Default to
         "eval".
     """
+
     # Create directory to eval_folder
     eval_dir = os.path.join(workdir, eval_folder)
     tf.io.gfile.makedirs(eval_dir)

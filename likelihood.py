@@ -29,6 +29,8 @@ def get_div_fn(fn):
     """Create the divergence function of `fn` using the Hutchinson-Skilling trace estimator."""
 
     def div_fn(x, t, eps):
+        """对应论文公式 (40)"""
+
         with torch.enable_grad():
             x.requires_grad_(True)
             fn_eps = torch.sum(fn(x, t) * eps)
@@ -66,11 +68,13 @@ def get_likelihood_fn(sde, inverse_scaler, hutchinson_type='Rademacher',
         score_fn = mutils.get_score_fn(
             sde, model, train=False, continuous=True)
         # Probability flow ODE is a special case of Reverse SDE
+        # $f(x,t) - \frac{1}{2} G^2(t) * s$
         rsde = sde.reverse(score_fn, probability_flow=True)
 
         return rsde.sde(x, t)[0]
 
     def div_fn(model, x, t, noise):
+        """计算散度(divergence): 雅可比矩阵的迹(trace)"""
         return get_div_fn(lambda xx, tt: drift_fn(model, xx, tt))(x, t, noise)
 
     def likelihood_fn(model, data):
@@ -89,6 +93,7 @@ def get_likelihood_fn(sde, inverse_scaler, hutchinson_type='Rademacher',
 
         with torch.no_grad():
             shape = data.shape
+
             if hutchinson_type == 'Gaussian':
                 epsilon = torch.randn_like(data)
             elif hutchinson_type == 'Rademacher':
@@ -96,33 +101,54 @@ def get_likelihood_fn(sde, inverse_scaler, hutchinson_type='Rademacher',
                     data, low=0, high=2).float() * 2 - 1.
             else:
                 raise NotImplementedError(
-                    f"Hutchinson type {hutchinson_type} unknown.")
+                    f"Hutchinson type {hutchinson_type} unknown."
+                )
 
             def ode_func(t, x):
                 sample = mutils.from_flattened_numpy(
                     x[:-shape[0]], shape).to(data.device).type(torch.float32)
                 vec_t = torch.ones(sample.shape[0], device=sample.device) * t
+
+                # ODE 的漂移系数, 对应论文公式 (38)
                 drift = mutils.to_flattened_numpy(
                     drift_fn(model, sample, vec_t))
+                # 对应论文公式 (39) 等号右边第2项被积函数
                 logp_grad = mutils.to_flattened_numpy(
                     div_fn(model, sample, vec_t, epsilon))
 
                 return np.concatenate([drift, logp_grad], axis=0)
 
+            # 由于需要求解2个 ODE, 因此将2个初始状态量拼接在一起
             init = np.concatenate(
-                [mutils.to_flattened_numpy(data), np.zeros((shape[0],))], axis=0)
+                [mutils.to_flattened_numpy(data), np.zeros((shape[0],))],
+                axis=0
+            )
             solution = integrate.solve_ivp(
-                ode_func, (eps, sde.T), init, rtol=rtol, atol=atol, method=method)
+                ode_func, (eps, sde.T), init,
+                rtol=rtol, atol=atol, method=method
+            )
+
+            # 数值求解 ODE 所经历的迭代次数
             nfe = solution.nfev
+            # 取索引 -1 代表最终状态, 即方程解
             zp = solution.y[:, -1]
+
+            # 根据论文公式 (38) 求得的 ODE 解: x(T)
             z = mutils.from_flattened_numpy(
                 zp[:-shape[0]], shape).to(data.device).type(torch.float32)
+            # 论文公式 (39) 等号右边的第二项
             delta_logp = mutils.from_flattened_numpy(
                 zp[-shape[0]:], (shape[0],)).to(data.device).type(torch.float32)
+            # 先验的对数概率密度, 即论文公式 (39) 等号右边的第一项 $\log p_T(x(T))$
             prior_logp = sde.prior_logp(z)
+
+            # 计算 bpd: $-\frac{1}{N} \log_2(p)$
+            # $-log_2(p_0(x_0))$ 除以 log(2) 是将自然底数 e 转换为以2为底数
             bpd = -(prior_logp + delta_logp) / np.log(2)
+            # Number of dims, 每个样本的像素总数
             N = np.prod(shape[1:])
             bpd = bpd / N
+
             # A hack to convert log-likelihoods to bits/dim
             offset = 7. - inverse_scaler(-1.)
             bpd = bpd + offset
