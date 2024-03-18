@@ -1,8 +1,9 @@
-from models import utils as mutils
 import torch
-import numpy as np
-from sampling import NoneCorrector, NonePredictor, shared_corrector_update_fn, shared_predictor_update_fn
 import functools
+import numpy as np
+
+from models import utils as mutils
+from sampling import NoneCorrector, NonePredictor, shared_corrector_update_fn, shared_predictor_update_fn
 
 
 def get_pc_inpainter(sde, predictor, corrector, inverse_scaler, snr,
@@ -25,6 +26,7 @@ def get_pc_inpainter(sde, predictor, corrector, inverse_scaler, snr,
     Returns:
       An inpainting function.
     """
+
     # Define predictor & corrector
     predictor_update_fn = functools.partial(shared_predictor_update_fn,
                                             sde=sde,
@@ -45,11 +47,14 @@ def get_pc_inpainter(sde, predictor, corrector, inverse_scaler, snr,
             with torch.no_grad():
                 vec_t = torch.ones(data.shape[0], device=data.device) * t
                 x, x_mean = update_fn(x, vec_t, model=model)
+                
                 masked_data_mean, std = sde.marginal_prob(data, vec_t)
                 masked_data = masked_data_mean + \
                     torch.randn_like(x) * std[:, None, None, None]
+                
                 x = x * (1. - mask) + masked_data * mask
                 x_mean = x * (1. - mask) + masked_data_mean * mask
+                
                 return x, x_mean
 
         return inpaint_update_fn
@@ -69,17 +74,16 @@ def get_pc_inpainter(sde, predictor, corrector, inverse_scaler, snr,
         Returns:
           Inpainted (complete) images.
         """
+        
         with torch.no_grad():
             # Initial sample
-            x = data * mask + \
-                sde.prior_sampling(data.shape).to(data.device) * (1. - mask)
+            x = data * mask + sde.prior_sampling(data.shape).to(data.device) * (1. - mask)
             timesteps = torch.linspace(sde.T, eps, sde.N)
+            
             for i in range(sde.N):
                 t = timesteps[i]
-                x, x_mean = corrector_inpaint_update_fn(
-                    model, data, mask, x, t)
-                x, x_mean = projector_inpaint_update_fn(
-                    model, data, mask, x, t)
+                x, x_mean = corrector_inpaint_update_fn(model, data, mask, x, t)
+                x, x_mean = projector_inpaint_update_fn(model, data, mask, x, t)
 
             return inverse_scaler(x_mean if denoise else x)
 
