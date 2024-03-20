@@ -16,11 +16,13 @@
 """Utility functions for computing FID/Inception scores."""
 
 import jax
-import numpy as np
 import six
+import numpy as np
+
 import tensorflow as tf
 import tensorflow_gan as tfgan
 import tensorflow_hub as tfhub
+
 
 INCEPTION_TFHUB = 'https://tfhub.dev/tensorflow/tfgan/eval/inception/1'
 INCEPTION_OUTPUT = 'logits'
@@ -34,14 +36,14 @@ INCEPTION_DEFAULT_IMAGE_SIZE = 299
 
 def get_inception_model(inceptionv3=False):
     if inceptionv3:
-        return tfhub.load(
-            'https://tfhub.dev/google/imagenet/inception_v3/feature_vector/4')
+        return tfhub.load('https://tfhub.dev/google/imagenet/inception_v3/feature_vector/4')
     else:
         return tfhub.load(INCEPTION_TFHUB)
 
 
 def load_dataset_stats(config):
     """Load the pre-computed dataset statistics."""
+
     if config.data.dataset == 'CIFAR10':
         filename = 'assets/stats/cifar10_stats.npz'
     elif config.data.dataset == 'CELEBA':
@@ -57,7 +59,7 @@ def load_dataset_stats(config):
 
 
 def classifier_fn_from_tfhub(output_fields, inception_model,
-                             return_tensor=False):
+                             return_tensor: bool = False):
     """Returns a function that can be as a classifier function.
 
     Copied from tfgan but avoid loading the model each time calling _classifier_fn
@@ -71,16 +73,20 @@ def classifier_fn_from_tfhub(output_fields, inception_model,
     Returns:
       A one-argument function that takes an image Tensor and returns outputs.
     """
+
     if isinstance(output_fields, six.string_types):
         output_fields = [output_fields]
 
     def _classifier_fn(images):
         output = inception_model(images)
+        
         if output_fields is not None:
             output = {x: output[x] for x in output_fields}
+            
         if return_tensor:
             assert len(output) == 1
             output = list(output.values())[0]
+            
         return tf.nest.map_structure(tf.compat.v1.layers.flatten, output)
 
     return _classifier_fn
@@ -92,6 +98,7 @@ def run_inception_jit(inputs,
                       num_batches=1,
                       inceptionv3=False):
     """Running the inception network. Assuming input is within [0, 255]."""
+
     if not inceptionv3:
         inputs = (tf.cast(inputs, tf.float32) - 127.5) / 127.5
     else:
@@ -101,14 +108,15 @@ def run_inception_jit(inputs,
         inputs,
         num_batches=num_batches,
         classifier_fn=classifier_fn_from_tfhub(None, inception_model),
-        dtypes=_DEFAULT_DTYPES)
+        dtypes=_DEFAULT_DTYPES
+    )
 
 
 @tf.function
 def run_inception_distributed(input_tensor,
                               inception_model,
-                              num_batches=1,
-                              inceptionv3=False):
+                              num_batches: int = 1,
+                              inceptionv3: bool = False):
     """Distribute the inception network computation to all available TPUs.
 
     Args:
@@ -121,17 +129,23 @@ def run_inception_distributed(input_tensor,
       A dictionary with key `pool_3` and `logits`, representing the pool_3 and
         logits of the inception network respectively.
     """
+
     num_tpus = jax.local_device_count()
     input_tensors = tf.split(input_tensor, num_tpus, axis=0)
+
     pool3 = []
     logits = [] if not inceptionv3 else None
+
     device_format = '/TPU:{}' if 'TPU' in str(jax.devices()[0]) else '/GPU:{}'
+
     for i, tensor in enumerate(input_tensors):
         with tf.device(device_format.format(i)):
             tensor_on_device = tf.identity(tensor)
             res = run_inception_jit(
-                tensor_on_device, inception_model, num_batches=num_batches,
-                inceptionv3=inceptionv3)
+                tensor_on_device, inception_model,
+                num_batches=num_batches,
+                inceptionv3=inceptionv3
+            )
 
             if not inceptionv3:
                 pool3.append(res['pool_3'])
